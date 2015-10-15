@@ -1,0 +1,18 @@
+<div>
+    By default, Jenkins will put all of the build matrix configurations into the Job Queue at once.
+
+    This is fine if the matrix size is small or there are plenty of nodes to pick up the builds.
+
+    However, with large configuration matrix, and long running builds users can have 100 builds in the Queue. <a href="https://issues.jenkins-ci.org/browse/JENKINS-25988" target="new">See bug.</a>
+
+    This option checks how many builds from the current projects are already in the queue, and waits for the quantity to drop below the limit before adding new build configurations to the queue.
+
+
+    <h4>Max Builds In Queue</h4>
+    <p>Default value is 0, means no limit on the builds. </p>
+
+
+    <h4>How Often To Check Queue (ms)</h4>
+    <p>Once the queue limit is reached, how often should the project check if there are available slots in the queue. Default is 1000ms. For long running builds check less often to not waste CPU cycles</p>
+
+</div>

@@ -123,6 +123,23 @@ public class MatrixProject extends AbstractProject<MatrixProject,MatrixBuild> im
      */
     private volatile String combinationFilter;
 
+
+    /**
+     * How many builds can be added into job queue for a given project
+     *
+     * @see #getMatrixThrottleMaxBuilds() () ()
+     */
+    private int matrixThrottleMaxBuilds;
+
+    /**
+     * Delay between checking the queue size
+     *
+     * @see #getMatrixThrottleDelay() ()
+     */
+    private int matrixThrottleDelay;
+
+
+
     /**
      * List of active {@link Builder}s configured for this project.
      */
@@ -372,6 +389,28 @@ public class MatrixProject extends AbstractProject<MatrixProject,MatrixBuild> im
     public String getCombinationFilter() {
         return combinationFilter;
     }
+
+    /**
+     * Obtains the maximum builds to be added into the queue for a matrix build
+     *
+     * @return non null integer, default of 0
+     */
+    public int getMatrixThrottleMaxBuilds() {
+        return matrixThrottleMaxBuilds;
+    }
+
+    /**
+     * Obtains the delay between checking the queue size Milliseconds
+     *
+     * @return non null integer, default of 1000
+     */
+    public int getMatrixThrottleDelay() {
+        if (matrixThrottleDelay == 0 ){
+            matrixThrottleDelay = 1000;
+        }
+        return matrixThrottleDelay;
+    }
+
 
     /**
      * @return can be null (to indicate that the configurations should be left to their natural order.)
@@ -895,6 +934,23 @@ public class MatrixProject extends AbstractProject<MatrixProject,MatrixBuild> im
             this.combinationFilter = Util.nullify(req.getParameter("combinationFilter"));
         } else {
             this.combinationFilter = null;
+        }
+
+        if(req.getParameter("hasMatrixThrottle")!=null) {
+
+            try {
+                matrixThrottleMaxBuilds = Math.abs(Integer.valueOf(Util.nullify(req.getParameter("matrixThrottleMaxBuilds"))));
+                matrixThrottleDelay = Math.abs(Integer.valueOf(Util.nullify(req.getParameter("matrixThrottleDelay"))));
+            } catch (NumberFormatException e){
+                //If someone puts junk into field, ignore it and default back to un-throttled
+
+                matrixThrottleDelay = 1000;
+                matrixThrottleMaxBuilds = 0;
+            }
+
+        } else {
+            matrixThrottleDelay = 1000;
+            matrixThrottleMaxBuilds = 0;
         }
 
         if(json.optBoolean("hasChildCustomWorkspace", json.has("childCustomWorkspace"))) {

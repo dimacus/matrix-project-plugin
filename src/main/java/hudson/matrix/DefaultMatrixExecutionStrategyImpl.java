@@ -1,5 +1,6 @@
 package hudson.matrix;
 
+import com.google.common.collect.Iterables;
 import groovy.lang.GroovyRuntimeException;
 import hudson.AbortException;
 import hudson.Extension;
@@ -16,13 +17,14 @@ import hudson.model.Result;
 import hudson.model.Run;
 import java.io.IOException;
 import java.io.PrintStream;
-import java.util.ArrayList;
-import java.util.Collection;
-import java.util.Comparator;
-import java.util.HashSet;
-import java.util.List;
-import java.util.TreeSet;
+import java.util.*;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 import javax.annotation.Nullable;
+
+import jenkins.model.Jenkins;
 import org.kohsuke.stapler.DataBoundConstructor;
 
 /**
@@ -37,6 +39,7 @@ import org.kohsuke.stapler.DataBoundConstructor;
  * @since 1.456
  */
 public class DefaultMatrixExecutionStrategyImpl extends MatrixExecutionStrategy {
+    private static ExecutorService cachedPool;
     private volatile boolean runSequentially;
 
     /**
@@ -151,10 +154,23 @@ public class DefaultMatrixExecutionStrategyImpl extends MatrixExecutionStrategy 
             logger.printf("Touchstone configurations resulted in %s, so aborting...%n", r);
             return r;
         }
-        
-        if(!runSequentially)
-            for(MatrixConfiguration c : delayedConfigurations)
-                scheduleConfigurationBuild(execution, c);
+
+        if(!runSequentially) {
+            int maxInQueue = 0;
+
+            if(delayedConfigurations.size() != 0){
+                maxInQueue = Iterables.get(delayedConfigurations, 0).asProject().getParent().getMatrixThrottleMaxBuilds();
+            }
+
+            if(maxInQueue == 0){
+                for (MatrixConfiguration c : delayedConfigurations) {
+                    scheduleConfigurationBuild(execution, c);
+                }
+            }else{
+                startCallable(new StartBuildsCallable(execution, delayedConfigurations));
+            }
+
+        }
 
         for (MatrixConfiguration c : delayedConfigurations) {
             if(runSequentially)
@@ -291,6 +307,73 @@ public class DefaultMatrixExecutionStrategyImpl extends MatrixExecutionStrategy 
             }
             
             Thread.sleep(1000);
+        }
+    }
+
+    private static Future startCallable(Callable callable){
+        //Share executor pool for all Matrix builds instead of creating a new cached thread pool
+        //Every time a new build is created
+        if (cachedPool == null){
+            cachedPool = Executors.newCachedThreadPool();
+        }
+
+        return cachedPool.submit(callable);
+
+    }
+
+    private class StartBuildsCallable implements Callable{
+
+        private final MatrixBuildExecution execution;
+        private final Collection<MatrixConfiguration> configurations;
+        private int sleepInterval = 1000;
+        private int maxInQueue = 0; //Set to default to no throttle just in case
+
+
+        public StartBuildsCallable(MatrixBuildExecution execution, Collection<MatrixConfiguration> configurations){
+            this.configurations = configurations;
+            this.execution = execution;
+
+            this.maxInQueue = Iterables.get(this.configurations, 0).asProject().getParent().getMatrixThrottleMaxBuilds();
+            this.sleepInterval = Iterables.get(this.configurations, 0).asProject().getParent().getMatrixThrottleDelay();
+        }
+
+        @Override
+        public Object call() throws Exception {
+            for (MatrixConfiguration currentConfiguration : this.configurations) {
+                while(!timeToAddToQueue(this.maxInQueue, this.configurations)){
+                    Thread.sleep(this.sleepInterval);
+                }
+                scheduleConfigurationBuild(this.execution, currentConfiguration);
+
+            }
+            return null;
+        }
+
+        protected boolean timeToAddToQueue(int maxInQueue, Collection<MatrixConfiguration> configurations){
+            return maxInQueue == 0 || buildsCurrentlyInQueueForThisProject(configurations) < maxInQueue;
+        }
+
+
+        protected int buildsCurrentlyInQueueForThisProject(Collection<MatrixConfiguration> configurations){
+            List<Queue.BuildableItem> buildableItems = Jenkins.getInstance().getQueue().getBuildableItems();
+            List<MatrixConfiguration> allMatrixConfigurationInQueue = new LinkedList<MatrixConfiguration>();
+
+            for (Queue.BuildableItem currentBuildableItem : buildableItems) {
+                if(currentBuildableItem.task.getOwnerTask() instanceof MatrixConfiguration){
+                    //Ignore any non matrix build types
+                    allMatrixConfigurationInQueue.add((MatrixConfiguration) currentBuildableItem.task.getOwnerTask());
+                }
+            }
+
+            int totalInQueue = 0;
+            for(MatrixConfiguration configuration : configurations){
+                if (allMatrixConfigurationInQueue.contains(configuration)){
+                    totalInQueue++;
+                }
+            }
+
+
+            return totalInQueue;
         }
     }
 
